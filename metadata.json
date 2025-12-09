@@ -1,0 +1,5 @@
+{
+  "name": "Lanchonete Pedidos",
+  "description": "Sistema interno de pedidos e impressão térmica para lanchonete.",
+  "requestFramePermissions": []
+}
