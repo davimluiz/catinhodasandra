@@ -50,7 +50,7 @@ const App: React.FC = () => {
   const handleConnectPrinter = async () => {
     const connected = await printerService.connect();
     setIsPrinterConnected(connected);
-    if (connected) alert("Impressora conectada com sucesso!");
+    if (connected) alert("Impressora USB conectada com sucesso!");
   };
 
   const handleAddToCart = (product: Product) => {
@@ -139,12 +139,12 @@ const App: React.FC = () => {
               className={`text-sm flex items-center gap-2 px-4 py-2 rounded-full border transition-all ${isPrinterConnected ? 'bg-green-500/20 border-green-500/50 text-green-200' : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'}`}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
-              {isPrinterConnected ? 'Impressora Pronta' : 'Conectar Impressora'}
+              {isPrinterConnected ? 'Impressora USB Pronta' : 'Conectar Impressora USB'}
             </button>
           </div>
         </div>
       </div>
-      <p className="mt-8 text-white/20 text-sm">Sistema v1.1 - {APP_NAME}</p>
+      <p className="mt-8 text-white/20 text-sm">Sistema v1.2 (USB) - {APP_NAME}</p>
     </div>
   );
 

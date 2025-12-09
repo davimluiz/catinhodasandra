@@ -1,21 +1,24 @@
 import { Order } from '../types';
 
-// Fix: Define missing Web Bluetooth types locally
-interface BluetoothRemoteGATTCharacteristic {
-  writeValue(value: BufferSource): Promise<void>;
-}
-
-interface BluetoothRemoteGATTService {
-  getCharacteristic(characteristic: string | number): Promise<BluetoothRemoteGATTCharacteristic>;
-}
-
-interface BluetoothRemoteGATTServer {
-  connect(): Promise<BluetoothRemoteGATTServer>;
-  getPrimaryService(service: string | number): Promise<BluetoothRemoteGATTService>;
-}
-
-interface BluetoothDevice {
-  gatt?: BluetoothRemoteGATTServer;
+// WebUSB Type Definitions
+interface USBDevice {
+  opened: boolean;
+  configuration: {
+    interfaces: {
+      interfaceNumber: number;
+      alternate: {
+        endpoints: {
+          direction: string;
+          endpointNumber: number;
+        }[];
+      };
+    }[];
+  } | null;
+  open(): Promise<void>;
+  selectConfiguration(configurationValue: number): Promise<void>;
+  claimInterface(interfaceNumber: number): Promise<void>;
+  transferOut(endpointNumber: number, data: BufferSource): Promise<any>;
+  close(): Promise<void>;
 }
 
 // ESC/POS Commands
@@ -25,67 +28,75 @@ const AT = 0x40; // Initialize
 const LF = 0x0A; // Line Feed
 const ALIGN_LEFT = [ESC, 0x61, 0x00];
 const ALIGN_CENTER = [ESC, 0x61, 0x01];
-// const ALIGN_RIGHT = [ESC, 0x61, 0x02];
 const BOLD_ON = [ESC, 0x45, 0x01];
 const BOLD_OFF = [ESC, 0x45, 0x00];
 const CUT_PAPER = [GS, 0x56, 0x41, 0x00]; // Cut full
 
-// Helper to remove accents for printer compatibility (basic ASCII)
+// Helper to remove accents
 const normalizeText = (text: string): string => {
   return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 };
 
 class PrinterService {
-  private device: BluetoothDevice | null = null;
-  private characteristic: BluetoothRemoteGATTCharacteristic | null = null;
+  private device: USBDevice | null = null;
+  private interfaceNumber: number = 0;
+  private endpointNumber: number | null = null;
 
   async connect() {
-    // Fix: Cast navigator to any to access bluetooth API
     const nav = navigator as any;
-    if (!nav.bluetooth) {
-      alert("WebBluetooth não suportado neste navegador. Use Chrome ou Edge.");
+    if (!nav.usb) {
+      alert("WebUSB não é suportado neste navegador. Use Google Chrome ou Edge.");
       return false;
     }
 
     try {
-      // Request device - Generic serial service often used by printers
-      this.device = await nav.bluetooth.requestDevice({
-        filters: [
-          { services: ['000018f0-0000-1000-8000-00805f9b34fb'] }, // Standard Printer Service
-        ],
-        optionalServices: [
-            '000018f0-0000-1000-8000-00805f9b34fb', // Specific
-            'e7810a71-73ae-499d-8c15-faa9aef0c3f2', // Some Chinese thermal printers
-             0xFF00, // Generic
-        ],
-        acceptAllDevices: false 
-      });
+      // Request any USB device. The user will filter visually in the browser popup.
+      // We can't filter effectively by class because many cheap printers define class 0 (per interface).
+      this.device = await nav.usb.requestDevice({ filters: [] });
       
-      // Note: allowAllDevices: true is not safe for production, usually we filter by service.
-      // If the above filter doesn't work for your specific printer, you might need to find its UUID.
-      // For this demo, we assume a standard BLE printer profile or fallback.
-      
-      if (!this.device || !this.device.gatt) return false;
+      if (!this.device) return false;
 
-      const server = await this.device.gatt.connect();
-      // Try to get the primary service
-      const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
-      // Characteristic for Write (usually 2AF1)
-      this.characteristic = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
+      await this.device.open();
       
+      // Select configuration #1 (standard for most devices)
+      await this.device.selectConfiguration(1);
+
+      // Attempt to find the interface and endpoint for printing
+      // We look for a Bulk OUT endpoint
+      const config = this.device.configuration;
+      if (!config) throw new Error("Configuração USB não encontrada");
+
+      const iface = config.interfaces[0]; // Usually interface 0
+      this.interfaceNumber = iface.interfaceNumber;
+
+      await this.device.claimInterface(this.interfaceNumber);
+
+      // Find the endpoint that is Direction: OUT and Type: BULK
+      const endpoint = iface.alternate.endpoints.find((e: any) => e.direction === 'out');
+      
+      if (!endpoint) {
+        throw new Error("Endpoint de saída não encontrado na impressora.");
+      }
+
+      this.endpointNumber = endpoint.endpointNumber;
       return true;
 
     } catch (error) {
-      console.error("Erro ao conectar impressora:", error);
-      alert("Falha ao conectar. Verifique se a impressora está ligada e pareada.");
+      console.error("Erro ao conectar impressora USB:", error);
+      alert("Falha ao conectar via USB. Certifique-se que o cabo está conectado e você selecionou o dispositivo correto.");
       return false;
     }
   }
 
   async printOrder(order: Order) {
-    if (!this.characteristic) {
+    if (!this.device || !this.device.opened) {
       const connected = await this.connect();
       if (!connected) return;
+    }
+
+    if (this.endpointNumber === null) {
+        alert("Impressora conectada, mas endpoint de escrita não identificado.");
+        return;
     }
 
     const encoder = new TextEncoder();
@@ -100,11 +111,11 @@ class PrinterService {
     };
     const newLine = () => commands.push(LF);
 
-    // Build Receipt
+    // Build Receipt Content
     add([ESC, AT]); // Init
     add(ALIGN_CENTER);
     add(BOLD_ON);
-    text("LANCHONETE PEDIDOS\n");
+    text("CANTINHO DA SANDRA\n");
     add(BOLD_OFF);
     text("--------------------------------\n");
     add(ALIGN_LEFT);
@@ -126,7 +137,6 @@ class PrinterService {
     order.items.forEach(item => {
         text(`${item.quantity}x ${item.name}\n`);
         const subtotal = item.price * item.quantity;
-        // Simple right alignment simulation (assuming ~32 chars width)
         text(`R$ ${subtotal.toFixed(2)}\n`);
     });
 
@@ -143,21 +153,18 @@ class PrinterService {
     newLine();
     newLine();
     newLine();
+    newLine();
     add(CUT_PAPER);
 
     try {
-        // Send in chunks to avoid buffer overflow
         const uint8Array = new Uint8Array(commands);
-        const chunkSize = 512;
-        for (let i = 0; i < uint8Array.length; i += chunkSize) {
-            const chunk = uint8Array.slice(i, i + chunkSize);
-            if(this.characteristic) {
-                await this.characteristic.writeValue(chunk);
-            }
-        }
+        // Send data to the printer
+        await this.device.transferOut(this.endpointNumber, uint8Array);
     } catch (e) {
-        console.error("Erro na impressão:", e);
-        alert("Erro ao enviar dados para impressora.");
+        console.error("Erro na impressão USB:", e);
+        alert("Erro ao enviar dados para impressora USB. Tente reconectar.");
+        // Attempt to cleanup/reset on error
+        try { await this.device.close(); } catch(err) {}
     }
   }
 }
